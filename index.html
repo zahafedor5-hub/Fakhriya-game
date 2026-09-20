@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ловля Еды — Игры</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            user-select: none;
+        }
+
+        body {
+            background-color: #1a1a2e;
+            color: #fff;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+
+        #game-container {
+            position: relative;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        canvas {
+            background: linear-gradient(to bottom, #16213e, #0f3460);
+            display: block;
+        }
+
+        /* Экран Game Over */
+        #game-over-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(15, 52, 96, 0.95);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+        }
+
+        #game-over-screen.active {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        #game-over-screen h1 {
+            font-size: 36px;
+            color: #e94560;
+            margin-bottom: 10px;
+        }
+
+        #game-over-screen p {
+            font-size: 20px;
+            margin-bottom: 25px;
+        }
+
+        .btn-restart {
+            background: #e94560;
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            font-size: 18px;
+            font-weight: bold;
+            border-radius: 25px;
+            cursor: pointer;
+            transition: background 0.2s, transform 0.1s;
+        }
+
+        .btn-restart:hover {
+            background: #ff5277;
+            transform: scale(1.05);
+        }
+
+        .btn-restart:active {
+            transform: scale(0.95);
+        }
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <canvas id="gameCanvas" width="450" height="600"></canvas>
+        
+        <div id="game-over-screen">
+            <h1>Игра Окончена!</h1>
+            <p>Вы пропустили предмет!</p>
+            <p>Итоговый счёт: <span id="finalScore">0</span></p>
+            <button class="btn-restart" onclick="restartGame()">Играть снова</button>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const gameOverScreen = document.getElementById('game-over-screen');
+        const finalScoreEl = document.getElementById('finalScore');
+
+        // Параметры игры
+        let score = 0;
+        let isGameOver = false;
+        let baseSpeed = 2.5;
+        let speedMultiplier = 1.0;
+        let spawnInterval = 100;
+        let frameCount = 0;
+
+        // Загрузка фото персонажа
+        const playerImage = new Image();
+        let isImageLoaded = false;
+        
+        // Вставьте имя вашего файла фотографии, если сохраняете локально
+        playerImage.src = 'photo.jpg'; 
+        playerImage.onload = () => {
+            isImageLoaded = true;
+        };
+
+        // Размеры игрока
+        const player = {
+            x: canvas.width / 2 - 40,
+            y: canvas.height - 110,
+            width: 80,
+            height: 100
+        };
+
+        let items = [];
+
+        // Вероятности появления предмета
+        const ITEM_TYPES = [
+            { type: 'fries', emoji: '🍟', score: 0.5, weight: 65, size: 40 }, 
+            { type: 'cola', emoji: '🥤', score: 1.0, weight: 25, size: 40 },  
+            { type: 'burger', emoji: '🍔', score: 2.0, weight: 10, size: 45 }  
+        ];
+
+        function getRandomItemType() {
+            let totalWeight = ITEM_TYPES.reduce((sum, item) => sum + item.weight, 0);
+            let random = Math.random() * totalWeight;
+            
+            for (let item of ITEM_TYPES) {
+                if (random < item.weight) {
+                    return item;
+                }
+                random -= item.weight;
+            }
+            return ITEM_TYPES[0];
+        }
+
+        // Движение за мышкой или пальцем
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            player.x = mouseX - player.width / 2;
+
+            if (player.x < 0) player.x = 0;
+            if (player.x + player.width > canvas.width) player.x = canvas.width - player.width;
+        });
+
+        canvas.addEventListener('touchmove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const touchX = e.touches[0].clientX - rect.left;
+            player.x = touchX - player.width / 2;
+
+            if (player.x < 0) player.x = 0;
+            if (player.x + player.width > canvas.width) player.x = canvas.width - player.width;
+            e.preventDefault();
+        });
+
+        function spawnItem() {
+            const config = getRandomItemType();
+            const x = Math.random() * (canvas.width - config.size);
+            
+            items.push({
+                x: x,
+                y: -config.size,
+                size: config.size,
+                emoji: config.emoji,
+                score: config.score,
+                speed: (baseSpeed + Math.random() * 0.8) * speedMultiplier
+            });
+        }
+
+        // Отрисовка игрока по фото
+        function drawPlayer() {
+            ctx.save();
+            
+            if (isImageLoaded) {
+                // Маска для круглой обрезки лица из фото
+                ctx.beginPath();
+                ctx.arc(player.x + player.width / 2, player.y + 55, 35, 0, Math.PI * 2);
+                ctx.clip();
+                ctx.drawImage(playerImage, player.x, player.y + 10, player.width, player.height - 10);
+            } else {
+                // Резервная отрисовка персонажа
+                ctx.fillStyle = '#ffdbac';
+                ctx.beginPath();
+                ctx.arc(player.x + player.width / 2, player.y + 45, 30, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.fillStyle = '#4a2c11';
+                ctx.beginPath();
+                ctx.arc(player.x + player.width / 2, player.y + 18, 16, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.fillStyle = '#2b2d42';
+                ctx.beginPath();
+                ctx.roundRect(player.x + 10, player.y + 70, player.width - 20, 30, 8);
+                ctx.fill();
+            }
+
+            ctx.restore();
+        }
+
+        function update() {
+            if (isGameOver) return;
+
+            frameCount++;
+            speedMultiplier += 0.0003;
+
+            if (frameCount % Math.max(30, Math.floor(spawnInterval / speedMultiplier)) === 0) {
+                spawnItem();
+            }
+
+            for (let i = items.length - 1; i >= 0; i--) {
+                let item = items[i];
+                item.y += item.speed;
+
+                if (
+                    item.y + item.size >= player.y &&
+                    item.y <= player.y + player.height &&
+                    item.x + item.size >= player.x &&
+                    item.x <= player.x + player.width
+                ) {
+                    score += item.score;
+                    items.splice(i, 1);
+                    continue;
+                }
+
+                if (item.y > canvas.height) {
+                    endGame();
+                    return;
+                }
+            }
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 22px Arial';
+            ctx.fillText(`Счёт: ${score.toFixed(1)}`, 15, 35);
+            ctx.font = '14px Arial';
+            ctx.fillStyle = '#a0a0a0';
+            ctx.fillText(`Скорость: x${speedMultiplier.toFixed(1)}`, 15, 55);
+
+            for (let item of items) {
+                ctx.font = `${item.size}px Arial`;
+                ctx.fillText(item.emoji, item.x, item.y + item.size);
+            }
+
+            drawPlayer();
+        }
+
+        function gameLoop() {
+            update();
+            draw();
+            if (!isGameOver) {
+                requestAnimationFrame(gameLoop);
+            }
+        }
+
+        function endGame() {
+            isGameOver = true;
+            finalScoreEl.textContent = score.toFixed(1);
+            gameOverScreen.classList.add('active');
+        }
+
+        function restartGame() {
+            score = 0;
+            speedMultiplier = 1.0;
+            frameCount = 0;
+            items = [];
+            isGameOver = false;
+            gameOverScreen.classList.remove('active');
+            requestAnimationFrame(gameLoop);
+        }
+
+        requestAnimationFrame(gameLoop);
+    </script>
+</body>
+</html>
